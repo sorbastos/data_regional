@@ -45,17 +45,18 @@ def gerar_painel_completo_v2():
 
     # Renomear para nomes amigáveis
     mapa_nomes = {
-        '01': 'desp_legislativa', '04': 'desp_adm', '06': 'desp_seguranca',
-        '08': 'desp_assist_social', '09': 'desp_previdencia', '10': 'desp_saude',
-        '11': 'desp_trabalho', '12': 'desp_educacao', '13': 'desp_cultura',
-        '15': 'desp_urbanismo', '16': 'desp_habitacao', '17': 'desp_saneamento',
-        '18': 'desp_ambiental', '19': 'desp_ciencia', '20': 'desp_agricultura',
-        '22': 'desp_industria', '23': 'desp_comercio', '26': 'desp_transporte',
-        '27': 'desp_desporto',
-        'Rec_Total': 'rec_orcamentaria_total',
-        'Rec_Impostos_Proprios': 'rec_tributaria_propria',
-        'Rec_Transf_Uniao': 'rec_transf_uniao',
-        'Rec_Transf_Estados': 'rec_transf_estados'
+        'pib_valor': "pib", 'populacao': 'pop',
+        '01': 'd_leg', '04': 'd_adm', '06': 'd_segp',
+        '08': 'd_assist', '09': 'd_prevsoc', '10': 'd_saude',
+        '11': 'd_trab', '12': 'd_educ', '13': 'd_cult',
+        '15': 'd_urb', '16': 'd_habit', '17': 'd_san',
+        '18': 'd_gestamb', '19': 'd_cientec', '20': 'd_agri',
+        '22': 'd_ind', '23': 'd_comserv', '26': 'd_transp',
+        '27': 'd_desplaz',
+        'Rec_Total': 'rectotal',
+        'Rec_Impostos_Proprios': 'rectrib',
+        'Rec_Transf_Uniao': 'transuniao',
+        'Rec_Transf_Estados': 'transest'
     }
     df_sic_pivot.rename(columns=mapa_nomes, inplace=True)
     
@@ -109,11 +110,11 @@ def gerar_painel_completo_v2():
     df_final['deflator_ipca'] = df_final['ano'].map(fatores)
     
     # --- FILTRO ESTRITO PARA DEFLAÇÃO ---
-    cols_monetarias = [c for c in df_final.columns if c.startswith('desp_') or c.startswith('rec_') or c == 'pib_valor']
+    cols_monetarias = [c for c in df_final.columns if c.startswith('d_') or c.startswith('rec_') or c == 'pib']
     
     for col in cols_monetarias:
         # Células NaN multiplicadas pelo deflator continuarão NaN (vazias)
-        df_final[f'{col}_real'] = df_final[col] * df_final['deflator_ipca']
+        df_final[f'{col}_r'] = df_final[col] * df_final['deflator_ipca']
 
     # =========================================================================
     # 5. CÁLCULO PER CAPITA (COM DADOS REAIS)
@@ -121,13 +122,13 @@ def gerar_painel_completo_v2():
     print("5. Calculando métricas Per Capita...")
     
     # Remove apenas se a população for nula ou zero, evitando quebrar a matemática global
-    df_final = df_final[(df_final['populacao'].notna()) & (df_final['populacao'] > 0)]
+    df_final = df_final[(df_final['pop'].notna()) & (df_final['pop'] > 0)]
     
-    cols_reais = [c for c in df_final.columns if c.endswith('_real')]
+    cols_reais = [c for c in df_final.columns if c.endswith('_r')]
     for col in cols_reais:
-        nome_pc = col.replace('_real', '_pc')
+        nome_pc = col.replace('_r', '_pc')
         # Células NaN divididas pela população continuarão NaN (vazias)
-        df_final[nome_pc] = df_final[col] / df_final['populacao']
+        df_final[nome_pc] = df_final[col] / df_final['pop']
 
     # =========================================================================
     # 6. EXPORTAR RELATÓRIO
