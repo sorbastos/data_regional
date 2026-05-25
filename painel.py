@@ -45,7 +45,7 @@ def gerar_painel_completo_v2():
 
     # Renomear para nomes amigáveis
     mapa_nomes = {
-        'pib_valor': "pib", 'populacao': 'pop',
+        'populacao': 'pop',
         '01': 'd_leg', '04': 'd_adm', '06': 'd_segp',
         '08': 'd_assist', '09': 'd_prevsoc', '10': 'd_saude',
         '11': 'd_trab', '12': 'd_educ', '13': 'd_cult',
@@ -75,6 +75,8 @@ def gerar_painel_completo_v2():
     df_lado_y = pd.read_sql("SELECT * FROM pib_municipios", conn_p)
     df_ipca = pd.read_sql("SELECT * FROM indice_ipca", conn_p)
     conn_p.close()
+    # --- NOVO: Renomear a coluna de PIB ---
+    df_lado_y.rename(columns={'pib_valor': 'pib'}, inplace=True)
 
     # =========================================================================
     # 3. CRUZAMENTO FINAL (INNER JOIN)
@@ -110,7 +112,11 @@ def gerar_painel_completo_v2():
     df_final['deflator_ipca'] = df_final['ano'].map(fatores)
     
     # --- FILTRO ESTRITO PARA DEFLAÇÃO ---
-    cols_monetarias = [c for c in df_final.columns if c.startswith('d_') or c.startswith('rec_') or c == 'pib']
+    # Lista explícita com os nomes das receitas
+    cols_receitas = ['rectotal', 'rectrib', 'transuniao', 'transest']
+    
+    # Seleciona as despesas, receitas e o pib
+    cols_monetarias = [c for c in df_final.columns if c.startswith('d_') or c in cols_receitas or c == 'pib']
     
     for col in cols_monetarias:
         # Células NaN multiplicadas pelo deflator continuarão NaN (vazias)
