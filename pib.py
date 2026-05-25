@@ -101,8 +101,7 @@ def extrair_e_salvar_dados():
     df_final['pib_valor'] = pd.to_numeric(df_final['pib_valor'], errors='coerce')
     df_final['ano'] = pd.to_numeric(df_final['ano'], errors='coerce')
     
-    # --- CORREÇÃO DA ESCALA DO PIB (A MUDANÇA É AQUI) ---
-    print("A converter o PIB de milhares (IBGE) para Reais exatos (R$ 1,00)...")
+    # ---> MULTIPLICA POR MIL REAIS PARA VALOR ABSOLUTO <---
     df_final['pib_valor'] = df_final['pib_valor'] * 1000
     
     # Removemos linhas vazias
