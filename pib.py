@@ -6,13 +6,13 @@ import requests
 def extrair_e_salvar_dados():
     nome_banco = "pib_regional.db"
     
-    # Abrimos a conexão com o banco logo no início
+    # Abrimos a conexão com a base de dados logo no início
     conn = sqlite3.connect(nome_banco)
 
     # =========================================================================
     # 1. EXTRAÇÃO DO IPCA (VIA BANCO CENTRAL DO BRASIL)
     # =========================================================================
-    print("1. Buscando IPCA Anual via Banco Central (SGS)...")
+    print("1. A procurar IPCA Anual via Banco Central (SGS)...")
     url_bcb = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.13522/dados?formato=json"
     
     try:
@@ -29,13 +29,13 @@ def extrair_e_salvar_dados():
             df_anual['ano'] = df_anual['data'].dt.year
             df_anual['ipca_anual'] = df_anual['valor'] / 100
             
-            # Filtrar a partir de 2013
+            # Filtrar a partir de 2013 até 2023
             df_ipca_final = df_anual[(df_anual['ano'] >= 2013) & (df_anual['ano'] <= 2023)][['ano', 'ipca_anual']].reset_index(drop=True)
             
             # --- SOLUÇÃO DEFINITIVA EM SQL PURO ---
             cursor = conn.cursor()
             
-            # 1. Destrói a tabela velha por completo (limpa o cache de tipos do SQLite)
+            # 1. Destrói a tabela velha por completo (limpa a cache de tipos do SQLite)
             cursor.execute("DROP TABLE IF EXISTS indice_ipca")
             
             # 2. Cria a tabela exigindo categoricamente que a coluna seja decimal (REAL)
@@ -44,21 +44,21 @@ def extrair_e_salvar_dados():
             # 3. Converte os dados do Pandas para uma lista de tuplas Python nativas
             registros = list(df_ipca_final.itertuples(index=False, name=None))
             
-            # 4. Injeta os dados diretamente no banco ignorando o to_sql do Pandas
+            # 4. Injeta os dados diretamente na base ignorando o to_sql do Pandas
             cursor.executemany("INSERT INTO indice_ipca (ano, ipca_anual) VALUES (?, ?)", registros)
             conn.commit()
             
             print(f"✅ Tabela de IPCA recriada e inserida via SQL puro! ({len(registros)} anos resgatados)")
         else:
-            print(f"❌ Erro ao acessar API do Banco Central: HTTP {resposta.status_code}")
+            print(f"❌ Erro ao aceder à API do Banco Central: HTTP {resposta.status_code}")
     except Exception as e:
         print(f"❌ Falha na conexão com o Banco Central: {e}")
 
 
     # =========================================================================
-    # 2. EXTRAÇÃO DO PIB (VIA IBGE)
+    # 2. EXTRAÇÃO DO PIB (VIA IBGE) E CORREÇÃO DE ESCALA
     # =========================================================================
-    print("\n2. Iniciando extração de dados do PIB pelo IBGE (Norte e Centro-Oeste)...")
+    print("\n2. A iniciar extração de dados do PIB pelo IBGE (Norte e Centro-Oeste)...")
 
     try:
         # Usa 'all' para prevenir que a API trave ao pedir um ano recém-virado que ainda não existe
@@ -101,6 +101,10 @@ def extrair_e_salvar_dados():
     df_final['pib_valor'] = pd.to_numeric(df_final['pib_valor'], errors='coerce')
     df_final['ano'] = pd.to_numeric(df_final['ano'], errors='coerce')
     
+    # --- CORREÇÃO DA ESCALA DO PIB (A MUDANÇA É AQUI) ---
+    print("A converter o PIB de milhares (IBGE) para Reais exatos (R$ 1,00)...")
+    df_final['pib_valor'] = df_final['pib_valor'] * 1000
+    
     # Removemos linhas vazias
     df_final.dropna(subset=['pib_valor', 'ano'], inplace=True)
     
@@ -108,19 +112,19 @@ def extrair_e_salvar_dados():
     df_final = df_final[df_final['ano'] >= 2013]
     
     # Filtro para excluir Brasília
-    print("Aplicando filtro para remover Brasília...")
+    print("A aplicar filtro para remover Brasília...")
     df_final = df_final[df_final['cod_ibge'].astype(str) != '5300108']
     
-    print(f"Extração concluída. Total de registros do PIB: {len(df_final)}")
+    print(f"Extração concluída. Total de registos do PIB: {len(df_final)}")
 
     # =========================================================================
-    # 3. SALVAR PIB NO BANCO
+    # 3. SALVAR PIB NA BASE DE DADOS
     # =========================================================================
-    print(f"Salvando dados de PIB no arquivo '{nome_banco}'...")
+    print(f"A guardar dados de PIB no ficheiro '{nome_banco}'...")
     df_final.to_sql("pib_municipios", conn, if_exists='replace', index=False)
     
     conn.close()
-    print("✅ Sucesso total! Bases do Banco Central e IBGE integradas e salvas no banco de dados.")
+    print("✅ Sucesso total! Bases do Banco Central e IBGE integradas e guardadas na base de dados.")
 
 if __name__ == "__main__":
     extrair_e_salvar_dados()
