@@ -32,6 +32,7 @@ df_painel <- df_bruto %>%
     # Somamos 1 para evitar o erro de log(0) = -Infinito nas contas financeiras
     df_painel <- df_painel %>%
   mutate(
+    ln_pib_pc         = asinh(pib_pc + 1),
     ln_pib            = asinh(pib_r + 1),
     ln_transuniao     = asinh(transuniao_r + 1),
     ln_desp_leg_adm   = asinh(desp_leg_adm + 1),
@@ -40,7 +41,9 @@ df_painel <- df_bruto %>%
     ln_desp_hab_urb   = asinh(desp_hab_urb + 1),
     ln_desp_agri      = asinh(desp_agri + 1),
     ln_transest       = asinh(transest_r + 1),
-    ln_rectrib        = asinh(rectrib_r + 1)  
+    ln_rectrib        = asinh(rectrib_r + 1),
+    ln_pop             = asinh(pop + 1),
+    ln_transest         = asinh(transest_r + 1)
   )
 
 
@@ -55,8 +58,8 @@ View(painel)
 # 4. DEFINIÇÃO DA FÓRMULA DO MODELO
 # ==============================================================================
 # PIB Real em função das Transferências da União e das categorias de despesa
-modelo_ln <- ln_pib ~ ln_transuniao + ln_desp_leg_adm + ln_desp_educ_cult + 
-                          ln_desp_saude_san + ln_desp_hab_urb + ln_desp_agri
+modelo_ln <- ln_pib_pc ~ ln_transuniao + ln_desp_leg_adm + ln_desp_educ_cult + 
+                          ln_desp_saude_san + ln_desp_hab_urb + ln_desp_agri + ln_transest
 
 modelo_base <- pib_r ~ transuniao_r + desp_leg_adm + desp_educ_cult + 
                           desp_saude_san + desp_hab_urb + desp_agri
@@ -72,15 +75,14 @@ summary(pols_ln)
 summary(pols)
 
 # Efeitos Fixos (Within) - Controla características não observáveis invariantes no tempo
-fe_ln <- plm(modelo_ln, data = painel, model = "within")
-fe <- plm(modelo_base, data = painel, model = "within")
+fe_ln <- plm(modelo_ln, data = painel, model = "within", effect = "twoways") # Controla efeitos individuais e temporais
+fe <- plm(modelo_base, data = painel, model = "within", effect = "twoways")
 summary(fe_ln)
 summary(fe)
 
 # Efeitos Aleatórios (Random)
-re_ln <- plm(modelo_ln, data = painel, model = "random")
-re <- plm(modelo_base, data = painel, model = "random")
-
+re_ln <- plm(modelo_ln, data = painel, model = "random") # Controla efeitos individuais e temporais
+re <- plm(modelo_base, data = painel, model = "random", effect = "twoways")
 summary(re_ln)
 summary(re)
 
@@ -90,8 +92,8 @@ summary(re)
 # Teste de Hausman: Compara Efeitos Fixos vs Efeitos Aleatórios
 # H0: O modelo de Efeitos Aleatórios é consistente e mais eficiente.
 # H1: O modelo de Efeitos Aleatórios é inconsistente, usar Efeitos Fixos.
-teste_hausman <- phtest(fe, re)
-
+teste_hausman <- phtest(fe_ln, re_ln)
+print(teste_hausman)
 print("---------------------------------------------------------")
 print("TESTE DE HAUSMAN")
 print("---------------------------------------------------------")
@@ -106,5 +108,31 @@ print("---------------------------------------------------------")
 
 # Em painéis municipais, problemas de heterocedasticidade e autocorrelação 
 # são quase uma certeza. A função vcovHC aplica a correção de Arellano.
-resumo_robusto <- coeftest(fe, vcov = vcovHC(fe, method = "arellano", type = "HC1"))
+resumo_robusto <- coeftest(fe_ln, vcov = vcovHC(fe_ln, method = "arellano", type = "HC1"))
 print(resumo_robusto)
+
+
+# ==============================================================================
+# TESTES DE RAIZ UNITÁRIA EM PAINEL (FISHER-ADF / MADDALA-WU)
+# ==============================================================================
+print("Rodando Testes de Estacionariedade (Fisher-ADF)...")
+
+# A função purtest() exige que a variável seja chamada diretamente do objeto pdata.frame.
+# test = "madwu" chama o equivalente ao Augmented Dickey-Fuller para painéis.
+# exo = "intercept" controla o intercepto na tendência.
+# lags = "AIC" usa o Critério de Akaike para definir defasagens automaticamente.
+
+# 1. Teste para o PIB (Variável Dependente)
+teste_pib <- purtest(painel$ln_pib, test = "madwu", exo = "intercept", lags = "AIC")
+print("--- Resultado para o ln_pib ---")
+summary(teste_pib)
+
+# 2. Teste para Despesas com Educação e Cultura
+teste_educ <- purtest(painel$ln_desp_educ_cult, test = "madwu", exo = "intercept", lags = "AIC")
+print("--- Resultado para ln_desp_educ_cult ---")
+summary(teste_educ)
+
+# 3. Teste para Transferências da União
+teste_transf <- purtest(painel$ln_transuniao, test = "madwu", exo = "intercept", lags = "AIC")
+print("--- Resultado para ln_transuniao ---")
+summary(teste_transf)
