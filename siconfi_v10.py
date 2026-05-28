@@ -125,5 +125,59 @@ def extrair_siconfi_v10_multiversal():
     conn_dest.close()
     print(f"\nConcluído! {contador} registros salvos em {arquivo_destino}")
 
+    # --- INÍCIO DO RELATÓRIO DE VERIFICAÇÃO ---
+    print("\n" + "="*25)
+    print("RELATÓRIO PÓS-EXTRAÇÃO")
+    print("="*25)
+
+    if not os.path.exists(arquivo_destino):
+        print(f"ERRO: O arquivo de destino '{arquivo_destino}' não foi encontrado para verificação.")
+        return
+
+    try:
+        # Configurações do Pandas para melhor visualização no relatório
+        pd.set_option('display.max_columns', None)
+        pd.set_option('display.width', 120)
+        pd.set_option('display.max_colwidth', 40)
+        pd.set_option('display.float_format', '{:,.2f}'.format)
+
+        conn_report = sqlite3.connect(arquivo_destino)
+        cursor = conn_report.cursor()
+
+        # 1. PEGAR LISTA DE TABELAS
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tabelas = cursor.fetchall()
+        
+        if not tabelas:
+            print("O banco de dados está vazio (sem tabelas).")
+            conn_report.close()
+            return
+            
+        print(f"\nTabelas encontradas em '{arquivo_destino}': {[t[0] for t in tabelas]}\n")
+
+        # 2. LOOP PARA MOSTRAR DADOS DE CADA TABELA
+        for t in tabelas:
+            nome_tabela = t[0]
+            print(f"--- INSPECIONANDO TABELA: {nome_tabela} ---")
+            
+            # Mostra as 50 primeiras linhas
+            print("\n>>> Amostra (50 primeiras linhas):")
+            df_amostra = pd.read_sql_query(f"SELECT * FROM {nome_tabela} LIMIT 50", conn_report)
+            print(df_amostra)
+            
+            # Mostra os anos distintos
+            print(f"\n>>> Anos baixados para a tabela '{nome_tabela}':")
+            df_anos = pd.read_sql_query(f"SELECT DISTINCT ano FROM {nome_tabela} ORDER BY ano ASC", conn_report)
+            if not df_anos.empty:
+                print(df_anos['ano'].tolist())
+            else:
+                print("Nenhum ano encontrado.")
+            print("-" * 50 + "\n")
+
+        conn_report.close()
+
+    except Exception as e:
+        print(f"Erro ao ler o banco para gerar o relatório: {e}")
+
 if __name__ == "__main__":
     extrair_siconfi_v10_multiversal()
