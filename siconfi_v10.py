@@ -77,7 +77,7 @@ def extrair_siconfi_v10_multiversal():
                                params={"an_exercicio": ano, "id_ente": cod, "no_anexo": "DCA-Anexo I-E"}, timeout=5)
                 if r.status_code == 200:
                     for item in r.json().get('items', []):
-                        if "Despesas Pagas" in item.get('coluna', ''):
+                        if "Despesas Liquidadas" in item.get('coluna', ''):
                             conta = item.get('conta', '')
                             cod_conta = conta.split(' - ')[0].strip()
                             if cod_conta in funcoes_despesa:
