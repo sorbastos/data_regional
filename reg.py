@@ -33,7 +33,7 @@ def load_and_prepare_data(filepath="Painel_Completo_2013_2023.xlsx"):
     df_bruto['desp_agri_v'] = df_bruto['d_agri_r'].fillna(0)
     
     # Transformação logarítmica tradicional (log(x + 1) para evitar zeros nas despesas)
-    df_bruto['ln_pib'] = np.log(df_bruto['pib'])
+    df_bruto['ln_pib_pc'] = np.log(df_bruto['pib_pc'])
     df_bruto['ln_transuniao'] = np.log(df_bruto['transuniao_r'] + 1)
     df_bruto['ln_desp_leg_adm'] = np.log(df_bruto['desp_leg_adm'] + 1)
     df_bruto['ln_desp_educ_cult'] = np.log(df_bruto['desp_educ_cult'] + 1)
@@ -110,9 +110,13 @@ def run_regressions(df_painel):
         'ln_desp_leg_adm', 'ln_desp_educ_cult', 'ln_desp_saude_san',
         'ln_desp_hab_urb', 'ln_desp_agri', 'ln_transuniao', 'ln_transest'
     ]
+    exog_varsg = [
+        'desp_leg_adm', 'desp_educ_cult', 'desp_saude_san',
+        'desp_hab_urb', 'd_agri', 'transuniao', 'transest'
+    ]
 
-    endog = df_painel['pib']
-    endog_ln = df_painel['ln_pib']
+    endog = df_painel['pib_pc']
+    endog_ln = df_painel['ln_pib_pc']
     exog = df_painel[exog_vars]
     exog_ln = df_painel[exog_vars_ln]
     
@@ -120,11 +124,6 @@ def run_regressions(df_painel):
     print(">>> Pooled OLS (POLS)...")
     pols = PooledOLS(endog, exog)
     pols_res = pols.fit()
-    
-    print(">>> Pooled OLS (LOG)...")
-    pols_ln = PooledOLS(endog_ln, exog_ln)
-    pols_ln_res = pols_ln.fit()
-    
 
     # 2. Efeitos Fixos (Two-ways: Entidade e Tempo)
     print(">>> Efeitos Fixos (Within - Twoways)...")
@@ -151,7 +150,6 @@ def run_regressions(df_painel):
     print("\n" + "="*80)
     print("RESUMO DO MODELO DE POOLED OLS (LOG) (Mínimos Quadrados Ordinários)")
     print("="*80)
-    print(pols_ln_res.summary)
     
     print("\n" + "="*80)
     print("RESUMO DO MODELO DE EFEITOS FIXOS")
@@ -176,8 +174,8 @@ def run_regressions(df_painel):
     return fe_res, re_res, fe_res_ln, re_res_ln
 
 def run_diagnostics(df_painel, fe_res, re_res, fe_res_ln, re_res_ln):
-    endog = df_painel['pib']
-    endog_ln = df_painel['ln_pib']
+    endog = df_painel['pib_pc']
+    endog_ln = df_painel['ln_pib_pc']
     
     # === TESTES DE DIAGNÓSTICO ===
     print("\n" + "="*80)
