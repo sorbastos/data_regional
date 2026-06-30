@@ -93,7 +93,7 @@ def importar_2013_direto():
                     estagio = str(row[col_estagio]).upper()
                     if tipo_dado == 'Despesa':
                         # Só aceita despesa PAGA
-                        if "PAGA" not in estagio: 
+                        if "LIQUIDAD" not in estagio or "PAGAS" in estagio: 
                             continue 
                     elif tipo_dado == 'Receita':
                         # Pula previsão
@@ -189,7 +189,7 @@ def importar_2013_direto():
         
         df_new.to_sql("dados_siconfi", conn, if_exists='append', index=False)
         conn.close()
-        print("SUCESSO! Dados de 2013 importados (Filtro 'Pagas' aplicado e População inserida).")
+        print("SUCESSO! Dados de 2013 importados (Filtro 'Liquidadas' aplicado e População inserida).")
     else:
         print("Nenhum dado encontrado.")
 
