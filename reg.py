@@ -104,11 +104,11 @@ def run_regressions(df_painel):
     
     exog_vars = [
         'd_leg', 'd_adm', 'd_educ', 'd_cult', 'd_saude', 'd_san',
-        'd_habit', 'd_urb', 'd_agri', 'transuniao', 'transest'
+        'd_habit', 'd_urb', 'd_agri', 'transuniao'
     ]
     exog_vars_ln = [
         'ln_desp_leg_adm', 'ln_desp_educ_cult', 'ln_desp_saude_san',
-        'ln_desp_hab_urb', 'ln_desp_agri', 'ln_transuniao', 'ln_transest'
+        'ln_desp_hab_urb', 'ln_desp_agri', 'ln_transuniao', 'transest'
     ]
     exog_varsg = [
         'desp_leg_adm', 'desp_educ_cult', 'desp_saude_san',
@@ -118,7 +118,7 @@ def run_regressions(df_painel):
     endog = df_painel['pib_pc']
     endog_ln = df_painel['ln_pib_pc']
     exog = df_painel[exog_vars]
-    exog_ln = df_painel[exog_vars_ln]
+    exog_ln = df_painel[exog_varsg]
     
     # 1. Pooled OLS
     print(">>> Pooled OLS (POLS)...")
