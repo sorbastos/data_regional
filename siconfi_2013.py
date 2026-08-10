@@ -93,7 +93,7 @@ def importar_2013_direto():
                     estagio = str(row[col_estagio]).upper()
                     if tipo_dado == 'Despesa':
                         # Só aceita despesa PAGA
-                        if "LIQUIDAD" not in estagio or "PAGAS" in estagio: 
+                        if "PAGAS" not in estagio: 
                             continue 
                     elif tipo_dado == 'Receita':
                         # Pula previsão
