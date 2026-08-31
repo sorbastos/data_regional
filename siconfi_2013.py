@@ -189,7 +189,7 @@ def importar_2013_direto():
         
         df_new.to_sql("dados_siconfi", conn, if_exists='append', index=False)
         conn.close()
-        print("SUCESSO! Dados de 2013 importados (Filtro 'Liquidadas' aplicado e População inserida).")
+        print("SUCESSO! Dados de 2013 importados (Filtro 'Pagas' aplicado e População inserida).")
     else:
         print("Nenhum dado encontrado.")
 
