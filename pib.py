@@ -6,177 +6,135 @@ import os
 
 def extrair_e_salvar_dados():
     nome_banco = "pib_regional.db"
-    
-    # Abrimos a conexão com a base de dados logo no início
     conn = sqlite3.connect(nome_banco)
 
     # =========================================================================
-    # 1. EXTRAÇÃO DO IPCA (VIA BANCO CENTRAL DO BRASIL)
+    # 1. EXTRAÇÃO DO IPCA (VIA BCB - SÉRIE 13522: ACUMULADO EM 12 MESES)
     # =========================================================================
-    print("1. A procurar IPCA Anual via Banco Central (SGS)...")
+    print("1. A procurar IPCA acumulado em 12 meses via Banco Central (SGS)...")
     url_bcb = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.13522/dados?formato=json"
-    
+
     try:
         resposta = requests.get(url_bcb, timeout=15)
         if resposta.status_code == 200:
             df_ipca = pd.DataFrame(resposta.json())
-            
-            # Formatação de datas e valores
             df_ipca['data'] = pd.to_datetime(df_ipca['data'], format='%d/%m/%Y')
             df_ipca['valor'] = pd.to_numeric(df_ipca['valor'])
-            
-            # Isolar o mês de dezembro (que contém o acumulado fechado do ano)
+
+            # Em dezembro, a série 13522 corresponde à inflação acumulada no
+            # ano. A divisão por 100 armazena a taxa em forma decimal.
             df_anual = df_ipca[df_ipca['data'].dt.month == 12].copy()
             df_anual['ano'] = df_anual['data'].dt.year
-            df_anual['ipca_anual'] = df_anual['valor'] / 100
-            
-            # Filtrar a partir de 2013 até 2023
-            df_ipca_final = df_anual[(df_anual['ano'] >= 2013) & (df_anual['ano'] <= 2023)][['ano', 'ipca_anual']].reset_index(drop=True)
-            
-            # --- SOLUÇÃO DEFINITIVA EM SQL PURO ---
-            cursor = conn.cursor()
-            
-            # 1. Destrói a tabela velha por completo (limpa a cache de tipos do SQLite)
-            cursor.execute("DROP TABLE IF EXISTS indice_ipca")
-            
-            # 2. Cria a tabela exigindo categoricamente que a coluna seja decimal (REAL)
-            cursor.execute("CREATE TABLE indice_ipca (ano INTEGER, ipca_anual REAL)")
-            
-            # 3. Converte os dados do Pandas para uma lista de tuplas Python nativas
-            registros = list(df_ipca_final.itertuples(index=False, name=None))
-            
-            # 4. Injeta os dados diretamente na base ignorando o to_sql do Pandas
-            cursor.executemany("INSERT INTO indice_ipca (ano, ipca_anual) VALUES (?, ?)", registros)
-            conn.commit()
-            
-            print(f"✅ Tabela de IPCA recriada e inserida via SQL puro! ({len(registros)} anos resgatados)")
+            df_ipca_final = df_anual[
+                (df_anual['ano'] >= 2013) & (df_anual['ano'] <= 2023)
+            ][['ano', 'valor']].copy()
+            df_ipca_final['ipca_anual'] = df_ipca_final['valor'] / 100
+            df_ipca_final = df_ipca_final[['ano', 'ipca_anual']].reset_index(drop=True)
+
+            anos_esperados = set(range(2013, 2024))
+            anos_ausentes = sorted(
+                anos_esperados - set(df_ipca_final['ano'].astype(int))
+            )
+            if anos_ausentes:
+                raise ValueError(
+                    f"Série do IPCA incompleta. Anos ausentes: {anos_ausentes}"
+                )
+
+            # Salva na base de dados
+            df_ipca_final.to_sql("indice_ipca", conn, if_exists='replace', index=False)
+            print(f"✅ IPCA anual salvo! ({len(df_ipca_final)} anos)")
         else:
-            print(f"❌ Erro ao aceder à API do Banco Central: HTTP {resposta.status_code}")
+            print(f"❌ Erro API BCB: HTTP {resposta.status_code}")
     except Exception as e:
         print(f"❌ Falha na conexão com o Banco Central: {e}")
 
 
     # =========================================================================
-    # 2. EXTRAÇÃO DO PIB (VIA IBGE) E CORREÇÃO DE ESCALA
+    # 2. EXTRAÇÃO DO PIB NOMINAL (IBGE)
     # =========================================================================
-    print("\n2. A iniciar extração de dados do PIB pelo IBGE (Norte e Centro-Oeste)...")
-
+    print("\n2. A iniciar extração de dados do PIB nominal pelo IBGE...")
     try:
-        # Usa 'all' para prevenir que a API trave ao pedir um ano recém-virado que ainda não existe
         df_raw = sidrapy.get_table(
-            table_code="5938",          
-            territorial_level="6",      
-            ibge_territorial_code="in n2 1,5", 
-            variable="37",              
-            period="all" 
+            table_code="5938",
+            territorial_level="6",
+            ibge_territorial_code="in n2 1,5",
+            variable="37",
+            period="all"
         )
+
+        # Limpeza do cabeçalho
+        primeira_celula = str(df_raw.iloc[0, 4])
+        if primeira_celula in ['V', 'Valor', '37']:
+            df_raw = df_raw.iloc[1:]
+
+        df_pib = df_raw.iloc[:, [4, 5, 6, 8]].copy()
+        df_pib.columns = ['pib_nominal', 'cod_ibge', 'municipio', 'ano']
+
+        # Converte para numérico e multiplica por 1000 para obter o valor absoluto
+        df_pib['pib_nominal'] = pd.to_numeric(df_pib['pib_nominal'], errors='coerce') * 1000
+        df_pib['ano'] = pd.to_numeric(df_pib['ano'], errors='coerce')
+
+        # Aplica os filtros de tempo e remove Brasília (5300108)
+        df_pib = df_pib[(df_pib['ano'] >= 2013) & (df_pib['cod_ibge'].astype(str) != '5300108')].dropna()
+
+        # Salva puramente nominal, conforme solicitado
+        df_pib.to_sql("pib_municipios", conn, if_exists='replace', index=False)
+        print(f"✅ PIB Nominal extraído e salvo! Total de registros: {len(df_pib)}")
     except Exception as e:
-        print(f"❌ Erro de conexão com o IBGE: {e}")
-        conn.close()
-        return 
+        print(f"❌ Erro ao extrair PIB do IBGE: {e}")
 
-    # --- TRATAMENTO ROBUSTO DE CABEÇALHO ---
-    coluna_valor_exemplo = df_raw.columns[4]
-    
-    e_dado_no_header = False
-    try:
-        float(coluna_valor_exemplo)
-        e_dado_no_header = True
-    except:
-        pass
 
-    if e_dado_no_header:
-        linha_perdida = pd.DataFrame([df_raw.columns], columns=df_raw.columns)
-        df_raw = pd.concat([linha_perdida, df_raw], axis=0, ignore_index=True)
+    # =========================================================================
+    # 3. EXTRAÇÃO DO CRÉDITO RURAL NOMINAL
+    # =========================================================================
+    print("\n3. A integrar base de Crédito Rural (SICOR/MDCR)...")
+
+    # Nome do arquivo CSV que você baixará do Banco Central
+    arquivo_credito = "credito_rural_bruto.csv"
+
+    if os.path.exists(arquivo_credito):
+        try:
+            # Lê a base bruta, garantindo que o separador e o encoding estejam corretos
+            df_cred = pd.read_csv(arquivo_credito, sep=';', encoding='utf-8')
+
+            # Limpeza básica e padronização (ajuste os nomes das colunas conforme seu CSV)
+            # Espera-se que o CSV tenha as colunas: 'cod_ibge', 'ano', 'valor_credito_nominal'
+            df_cred['ano'] = pd.to_numeric(df_cred['ano'], errors='coerce')
+            df_cred['valor_credito_nominal'] = pd.to_numeric(df_cred['valor_credito_nominal'], errors='coerce')
+
+            # Filtra NAs e restringe ao período da pesquisa (2013-2023)
+            df_cred = df_cred[(df_cred['ano'] >= 2013) & (df_cred['ano'] <= 2023)].dropna(subset=['cod_ibge'])
+
+            # Salva no banco de dados regional
+            df_cred.to_sql("credito_municipal", conn, if_exists='replace', index=False)
+            print(f"✅ Tabela de Crédito Rural Nominal salva com sucesso! ({len(df_cred)} registros)")
+        except Exception as e:
+            print(f"❌ Erro ao processar o arquivo de crédito rural: {e}")
     else:
-        if not df_raw.empty:
-            primeira_celula = str(df_raw.iloc[0, 4])
-            if primeira_celula in ['V', 'Valor', '37']: 
-                df_raw = df_raw.iloc[1:]
+        print(f"⚠️ O arquivo '{arquivo_credito}' não foi encontrado na pasta.")
+        print("   -> Por favor, baixe o CSV consolidado do MDCR e coloque-o neste diretório.")
 
-    # --- SELEÇÃO E LIMPEZA DE COLUNAS ---
-    df_final = df_raw.iloc[:, [4, 5, 6, 8]].copy()
-    df_final.columns = ['pib_valor', 'cod_ibge', 'municipio', 'ano']
-
-    # Conversão de tipos
-    df_final['pib_valor'] = pd.to_numeric(df_final['pib_valor'], errors='coerce')
-    df_final['ano'] = pd.to_numeric(df_final['ano'], errors='coerce')
-    
-    # ---> MULTIPLICA POR MIL REAIS PARA VALOR ABSOLUTO <---
-    df_final['pib_valor'] = df_final['pib_valor'] * 1000
-    
-    # Removemos linhas vazias
-    df_final.dropna(subset=['pib_valor', 'ano'], inplace=True)
-    
-    # Mantemos apenas os dados a partir de 2013
-    df_final = df_final[df_final['ano'] >= 2013]
-    
-    # Filtro para excluir Brasília
-    print("A aplicar filtro para remover Brasília...")
-    df_final = df_final[df_final['cod_ibge'].astype(str) != '5300108']
-    
-    print(f"Extração concluída. Total de registos do PIB: {len(df_final)}")
-
-    # =========================================================================
-    # 3. SALVAR PIB NA BASE DE DADOS
-    # =========================================================================
-    print(f"A guardar dados de PIB no ficheiro '{nome_banco}'...")
-    df_final.to_sql("pib_municipios", conn, if_exists='replace', index=False)
-    
     conn.close()
-    print("✅ Sucesso total! Bases do Banco Central e IBGE integradas e guardadas na base de dados.")
 
-    # --- INÍCIO DO RELATÓRIO DE VERIFICAÇÃO ---
+    # =========================================================================
+    # 4. RELATÓRIO DE VERIFICAÇÃO
+    # =========================================================================
     print("\n" + "="*25)
-    print("RELATÓRIO PÓS-EXTRAÇÃO (PIB E IPCA)")
+    print("RELATÓRIO PÓS-EXTRAÇÃO")
     print("="*25)
 
-    if not os.path.exists(nome_banco):
-        print(f"ERRO: O arquivo de destino '{nome_banco}' não foi encontrado para verificação.")
-        return
-
     try:
-        # Configurações do Pandas para melhor visualização no relatório
-        pd.set_option('display.max_columns', None)
-        pd.set_option('display.width', 120)
-        pd.set_option('display.max_colwidth', 40)
-        pd.set_option('display.float_format', '{:,.2f}'.format)
-
         conn_report = sqlite3.connect(nome_banco)
-        cursor = conn_report.cursor()
+        tabelas = pd.read_sql_query("SELECT name FROM sqlite_master WHERE type='table';", conn_report)
+        print(f"Tabelas presentes no banco '{nome_banco}': {tabelas['name'].tolist()}\n")
 
-        # 1. PEGAR LISTA DE TABELAS
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        tabelas = cursor.fetchall()
-        
-        if not tabelas:
-            print("O banco de dados está vazio (sem tabelas).")
-            conn_report.close()
-            return
-            
-        print(f"\nTabelas encontradas em '{nome_banco}': {[t[0] for t in tabelas]}\n")
-
-        # 2. LOOP PARA MOSTRAR DADOS DE CADA TABELA
-        for t in tabelas:
-            nome_tabela = t[0]
-            print(f"--- INSPECIONANDO TABELA: {nome_tabela} ---")
-            
-            print("\n>>> Amostra (50 primeiras linhas):")
-            df_amostra = pd.read_sql_query(f"SELECT * FROM {nome_tabela} LIMIT 50", conn_report)
-            print(df_amostra)
-            
-            print(f"\n>>> Anos baixados para a tabela '{nome_tabela}':")
-            df_anos = pd.read_sql_query(f"SELECT DISTINCT ano FROM {nome_tabela} ORDER BY ano ASC", conn_report)
-            if not df_anos.empty:
-                print(sorted(df_anos['ano'].astype(int).tolist()))
-            else:
-                print("Nenhum ano encontrado.")
+        for tabela in tabelas['name']:
+            print(f"--- AMOSTRA DA TABELA: {tabela} ---")
+            print(pd.read_sql_query(f"SELECT * FROM {tabela} LIMIT 3", conn_report))
             print("-" * 50 + "\n")
-
         conn_report.close()
-
     except Exception as e:
-        print(f"Erro ao ler o banco para gerar o relatório: {e}")
+        print(f"Erro ao gerar o relatório final: {e}")
 
 if __name__ == "__main__":
     extrair_e_salvar_dados()

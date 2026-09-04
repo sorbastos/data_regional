@@ -1,215 +1,126 @@
 import pandas as pd
 import numpy as np
-import statsmodels.api as sm
-from linearmodels.panel import PanelOLS, RandomEffects, PooledOLS
+from linearmodels.panel import PanelOLS
 import warnings
-import numpy.linalg as la
-from scipy import stats
-from statsmodels.tsa.stattools import adfuller
 import os
 
 warnings.filterwarnings('ignore')
 
 def load_and_prepare_data(filepath="Painel_Completo_2013_2023.xlsx"):
     print("=========================================================")
-    print("1. CARREGAMENTO DOS DADOS")
+    print("1. CARREGAMENTO E PREPARAÇÃO DOS DADOS (EM NÍVEL)")
     print("=========================================================")
     if not os.path.exists(filepath):
         print(f"ERRO: Arquivo {filepath} não encontrado.")
         return None
         
-    print(f"Carregando o painel de dados: {filepath}...")
     df_bruto = pd.read_excel(filepath)
     
-    print("\n=========================================================")
-    print("2. PREPARAÇÃO E AGRUPAMENTO DAS VARIÁVEIS")
-    print("=========================================================")
-    # Agrupando despesas (Lidando com NaNs com preenchimento zero onde somamos, ou deixando NaN)
-    # Preferimos tratar com dropna posteriormente.
+    # Agrupando despesas
     df_bruto['desp_leg_adm'] = df_bruto['d_leg_r'].fillna(0) + df_bruto['d_adm_r'].fillna(0)
     df_bruto['desp_educ_cult'] = df_bruto['d_educ_r'].fillna(0) + df_bruto['d_cult_r'].fillna(0)
     df_bruto['desp_saude_san'] = df_bruto['d_saude_r'].fillna(0) + df_bruto['d_san_r'].fillna(0)
     df_bruto['desp_hab_urb'] = df_bruto['d_habit_r'].fillna(0) + df_bruto['d_urb_r'].fillna(0)
-    df_bruto['desp_agri_v'] = df_bruto['d_agri_r'].fillna(0)
-    
-    # Transformação logarítmica tradicional (log(x + 1) para evitar zeros nas despesas)
-    df_bruto['ln_pib_pc'] = np.log(df_bruto['pib_pc'])
-    df_bruto['ln_transuniao'] = np.log(df_bruto['transuniao_r'] + 1)
-    df_bruto['ln_desp_leg_adm'] = np.log(df_bruto['desp_leg_adm'] + 1)
-    df_bruto['ln_desp_educ_cult'] = np.log(df_bruto['desp_educ_cult'] + 1)
-    df_bruto['ln_desp_saude_san'] = np.log(df_bruto['desp_saude_san'] + 1)
-    df_bruto['ln_desp_hab_urb'] = np.log(df_bruto['desp_hab_urb'] + 1)
-    df_bruto['ln_desp_agri'] = np.log(df_bruto['desp_agri_v'] + 1)
-    df_bruto['ln_transest'] = np.log(df_bruto['transest_r'] + 1)
+    df_bruto['desp_agri'] = df_bruto['d_agri_r'].fillna(0)
+    df_bruto['transuniao'] = df_bruto['transuniao_r']
+    df_bruto['transest'] = df_bruto['transest_r']
     
     # Declarando a estrutura de Painel (MultiIndex: Entidade, Tempo)
     df_painel = df_bruto.set_index(['cod_ibge', 'ano'])
-
+    
+    # Variáveis em nível a serem defasadas
+    variaveis_base = [
+        'desp_leg_adm', 'desp_educ_cult', 'desp_saude_san',
+        'desp_hab_urb', 'desp_agri', 'transuniao', 'transest'
+    ]
+    
+    print("Criando variáveis defasadas (t-1 e t-2)...")
+    for var in variaveis_base:
+        # Lag de 1 ano
+        df_painel[f'{var}_lag1'] = df_painel.groupby(level=0)[var].shift(1)
+        # Lag de 2 anos
+        df_painel[f'{var}_lag2'] = df_painel.groupby(level=0)[var].shift(2)
+        
     return df_painel
 
-def hausman_test(fe_res, re_res):
-    """
-    Calcula o Teste de Hausman para escolher entre Efeitos Fixos e Aleatórios.
-    H0: O modelo de Efeitos Aleatórios é consistente e mais eficiente.
-    H1: O modelo de Efeitos Fixos é consistente (RE não é).
-    """
-    b_fe, b_re = fe_res.params, re_res.params
-    v_fe, v_re = fe_res.cov, re_res.cov
-    
-    # Isolar os coeficientes comuns
-    common_coef = list(set(b_fe.index).intersection(b_re.index))
-    b_fe, b_re = b_fe[common_coef], b_re[common_coef]
-    v_fe, v_re = v_fe.loc[common_coef, common_coef], v_re.loc[common_coef, common_coef]
-    
-    df = len(common_coef)
-    diff = b_fe - b_re
-    v_diff = v_fe - v_re
-    
-    try:
-        chi2 = diff.dot(la.inv(v_diff)).dot(diff)
-        pval = stats.chi2.sf(np.abs(chi2), df)
-        return chi2, df, pval
-    except la.LinAlgError:
-        return np.nan, df, np.nan
-
-def fisher_adf_test(panel_series):
-    """
-    Teste Fisher-ADF de Raiz Unitária para dados em painel.
-    H0: As séries temporais individuais possuem raiz unitária.
-    """
-    p_values = []
-    entities = panel_series.index.levels[0]
-    for entity in entities:
-        series = panel_series.xs(entity).dropna()
-        if len(series) > 3:  # Necessário um mínimo de observações na série histórica
-            try:
-                res = adfuller(series, maxlag=1, autolag=None)
-                p_values.append(res[1])
-            except: pass
-            
-    if not p_values: return np.nan, np.nan
-        
-    p_values = np.array(p_values)
-    p_values[p_values == 0] = 1e-10 # Prevenir log(0)
-    fisher_stat = -2 * np.sum(np.log(p_values))
-    df = 2 * len(p_values)
-    pval = stats.chi2.sf(fisher_stat, df)
-    
-    return fisher_stat, pval
+def calcular_criterios(res):
+    """Calcula AIC e BIC com base no log-likelihood para comparação formal."""
+    loglik = res.loglik
+    k = res.df_model
+    n = res.nobs
+    aic = -2 * loglik + 2 * k
+    bic = -2 * loglik + k * np.log(n)
+    return aic, bic
 
 def run_regressions(df_painel):
     print("\n=========================================================")
-    print("3. ESTIMAÇÃO DOS MODELOS")
+    print("2. ESTIMAÇÃO DOS MODELOS EM NÍVEL (EFEITOS FIXOS)")
     print("=========================================================")
     
-    exog_vars = [
-        'd_leg', 'd_adm', 'd_educ', 'd_cult', 'd_saude', 'd_san',
-        'd_habit', 'd_urb', 'd_agri', 'transuniao'
-    ]
-    exog_vars_ln = [
-        'ln_desp_leg_adm', 'ln_desp_educ_cult', 'ln_desp_saude_san',
-        'ln_desp_hab_urb', 'ln_desp_agri', 'ln_transuniao', 'transest'
-    ]
-    exog_varsg = [
+    variaveis_base = [
         'desp_leg_adm', 'desp_educ_cult', 'desp_saude_san',
-        'desp_hab_urb', 'd_agri', 'transuniao', 'transest'
+        'desp_hab_urb', 'desp_agri', 'transuniao', 'transest'
     ]
-
-    endog = df_painel['pib_pc']
-    endog_ln = df_painel['ln_pib_pc']
-    exog = df_painel[exog_vars]
-    exog_ln = df_painel[exog_varsg]
     
-    # 1. Pooled OLS
-    print(">>> Pooled OLS (POLS)...")
-    pols = PooledOLS(endog, exog)
-    pols_res = pols.fit()
-
-    # 2. Efeitos Fixos (Two-ways: Entidade e Tempo)
-    print(">>> Efeitos Fixos (Within - Twoways)...")
-    fe = PanelOLS(endog, exog, entity_effects=True, time_effects=True)
-    fe_res = fe.fit() 
+    # === MODELO 2: Efeitos Fixos Defasado em 1 Ano (Lag 1) ===
+    exog_lag1 = [f'{var}_lag1' for var in variaveis_base]
     
-    fe_res_ln = PanelOLS(endog_ln, exog_ln, entity_effects=True, time_effects=True)
-    fe_res_ln = fe_res_ln.fit() 
+    # Filtra NAs para o modelo com lag 1
+    df_m2 = df_painel[['pib'] + exog_lag1].dropna()
+    Y_m2 = df_m2['pib']
+    X_m2 = df_m2[exog_lag1]
     
-    # 3. Efeitos Aleatórios
-    print(">>> Efeitos Aleatórios...")
-    re = RandomEffects(endog, exog)
-    re_res = re.fit()
+    print("\n>>> Estimando Efeitos Fixos Bidirecionais (Lag 1)...")
+    fe_m2 = PanelOLS(Y_m2, X_m2, entity_effects=True, time_effects=True)
+    res_m2 = fe_m2.fit(cov_type='robust')
+    aic_m2, bic_m2 = calcular_criterios(res_m2)
     
-    re_res_ln = RandomEffects(endog_ln, exog_ln)
-    re_res_ln = re_res_ln.fit()
+    # === MODELO 3: Efeitos Fixos Defasado em 2 Anos (Lag 2 - Isolado) ===
+    exog_lag2 = [f'{var}_lag2' for var in variaveis_base]
+    
+    # Filtra NAs para o modelo com lag 2
+    df_m3 = df_painel[['pib'] + exog_lag2].dropna()
+    Y_m3 = df_m3['pib']
+    X_m3 = df_m3[exog_lag2]
+    
+    print(">>> Estimando Efeitos Fixos Bidirecionais (Lag 2)...")
+    fe_m3 = PanelOLS(Y_m3, X_m3, entity_effects=True, time_effects=True)
+    res_m3 = fe_m3.fit(cov_type='robust')
+    aic_m3, bic_m3 = calcular_criterios(res_m3)
     
     # === RESULTADOS ===
     print("\n" + "="*80)
-    print("RESUMO DO MODELO DE POOLED OLS (Mínimos Quadrados Ordinários)")
+    print("MODELO 2: EFEITOS FIXOS (LAG 1)")
     print("="*80)
-    print(pols_res.summary)
+    print(res_m2.summary)
 
     print("\n" + "="*80)
-    print("RESUMO DO MODELO DE POOLED OLS (LOG) (Mínimos Quadrados Ordinários)")
+    print("MODELO 3: EFEITOS FIXOS (LAG 2)")
     print("="*80)
+    print(res_m3.summary)
     
-    print("\n" + "="*80)
-    print("RESUMO DO MODELO DE EFEITOS FIXOS")
-    print("="*80)
-    print(fe_res.summary)
-
-    print("\n" + "="*80)
-    print("RESUMO DO MODELO DE EFEITOS FIXOS (LOG)")
-    print("="*80)
-    print(fe_res_ln.summary)
+    # ------------------------------------------------------------------
+    # SALVANDO OS RESULTADOS EM UM ARQUIVO MARKDOWN (.md)
+    # ------------------------------------------------------------------
+    print("\nSalvando os resultados no arquivo 'resultados_efeitos_fixos_sem_log.md'...")
+    md_content = "# Resultados da Estimação de Efeitos Fixos (Modelos em Nível)\n\n"
     
-    print("\n" + "="*80)
-    print("RESUMO DO MODELO DE EFEITOS ALEATÓRIOS")
-    print("="*80)
-    print(re_res.summary)
-
-    print("\n" + "="*80)
-    print("RESUMO DO MODELO DE EFEITOS ALEATÓRIOS (LOG)")
-    print("="*80)
-    print(re_res_ln.summary)
-
-    return fe_res, re_res, fe_res_ln, re_res_ln
-
-def run_diagnostics(df_painel, fe_res, re_res, fe_res_ln, re_res_ln):
-    endog = df_painel['pib_pc']
-    endog_ln = df_painel['ln_pib_pc']
+    md_content += "## Modelo 2: Efeitos Fixos (Lag 1)\n"
+    md_content += f"> **Critérios de Seleção:** AIC = {aic_m2:.2f} | BIC = {bic_m2:.2f}\n\n"
+    md_content += f"```text\n{res_m2.summary.as_text()}\n```\n\n"
     
-    # === TESTES DE DIAGNÓSTICO ===
-    print("\n" + "="*80)
-    print("TESTE DE HAUSMAN (Efeitos Fixos vs Efeitos Aleatórios)")
-    print("="*80)
-    h_stat, h_df, h_pval = hausman_test(fe_res, re_res)
-    print("--- Modelo em Nível ---")
-    print(f"Estatística Chi-quadrado ({h_df} df): {h_stat:.4f} | P-valor: {h_pval:.4f}")
-    if h_pval < 0.05: print("Conclusão: Rejeita H0 -> Efeitos Fixos é preferido.")
-    else: print("Conclusão: Não rejeita H0 -> Efeitos Aleatórios é preferido.")
+    md_content += "## Modelo 3: Efeitos Fixos (Lag 2)\n"
+    md_content += f"> **Critérios de Seleção:** AIC = {aic_m3:.2f} | BIC = {bic_m3:.2f}\n\n"
+    md_content += f"```text\n{res_m3.summary.as_text()}\n```\n"
 
-    h_stat_ln, h_df_ln, h_pval_ln = hausman_test(fe_res_ln, re_res_ln)
-    print("\n--- Modelo em LOG ---")
-    print(f"Estatística Chi-quadrado ({h_df_ln} df): {h_stat_ln:.4f} | P-valor: {h_pval_ln:.4f}")
-    if h_pval_ln < 0.05: print("Conclusão: Rejeita H0 -> Efeitos Fixos é preferido.")
-    else: print("Conclusão: Não rejeita H0 -> Efeitos Aleatórios é preferido.")
-
-    print("\n" + "="*80)
-    print("TESTE DE RAIZ UNITÁRIA EM PAINEL (Fisher-ADF)")
-    print("="*80)
-    f_stat, f_pval = fisher_adf_test(endog)
-    print("Variável dependente Nível (pib):")
-    print(f"Estatística Fisher: {f_stat:.4f} | P-valor: {f_pval:.4f}")
-    if f_pval < 0.05: print("Conclusão: Rejeita H0 -> Pelo menos uma série é estacionária.")
-    else: print("Conclusão: Não rejeita H0 -> As séries possuem raiz unitária.")
-
-    f_stat_ln, f_pval_ln = fisher_adf_test(endog_ln)
-    print("\nVariável dependente LOG (ln_pib):")
-    print(f"Estatística Fisher: {f_stat_ln:.4f} | P-valor: {f_pval_ln:.4f}")
-    if f_pval_ln < 0.05: print("Conclusão: Rejeita H0 -> Pelo menos uma série é estacionária.")
-    else: print("Conclusão: Não rejeita H0 -> As séries possuem raiz unitária.")
+    try:
+        with open('resultados_efeitos_fixos_sem_log.md', 'w', encoding='utf-8') as f:
+            f.write(md_content)
+        print("Arquivo 'resultados_efeitos_fixos_sem_log.md' gerado com sucesso!")
+    except Exception as e:
+        print(f"Erro ao salvar arquivo markdown: {e}")
 
 if __name__ == "__main__":
     df = load_and_prepare_data()
     if df is not None:
-        fe_res, re_res, fe_res_ln, re_res_ln = run_regressions(df)
-        run_diagnostics(df, fe_res, re_res, fe_res_ln, re_res_ln)
+        run_regressions(df)

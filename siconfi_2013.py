@@ -181,15 +181,24 @@ def importar_2013_direto():
     # Salvar
     if buffer_insercao:
         print(f"\n3. Salvando no banco {db_destino}...")
-        conn = sqlite3.connect(db_destino)
         df_new = pd.DataFrame(buffer_insercao)
         
         # Remove duplicatas exatas do buffer antes de inserir
         df_new.drop_duplicates(subset=['cod_ibge', 'categoria', 'tipo'], keep='first', inplace=True)
         
-        df_new.to_sql("dados_siconfi", conn, if_exists='append', index=False)
-        conn.close()
-        print("SUCESSO! Dados de 2013 importados (Filtro 'Pagas' aplicado e População inserida).")
+        # Importação idempotente: substitui apenas 2013 e mantém 2014-2023.
+        with sqlite3.connect(db_destino) as conn:
+            tabela_existe = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dados_siconfi'"
+            ).fetchone()
+            if tabela_existe:
+                conn.execute("DELETE FROM dados_siconfi WHERE ano = 2013")
+            df_new.to_sql("dados_siconfi", conn, if_exists='append', index=False)
+
+        print(
+            "SUCESSO! Dados de 2013 substituídos com segurança "
+            "(Filtro 'Pagas' aplicado e População inserida)."
+        )
     else:
         print("Nenhum dado encontrado.")
 

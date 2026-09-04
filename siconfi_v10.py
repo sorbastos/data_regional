@@ -61,11 +61,38 @@ def extrair_siconfi_v10_multiversal():
     lista_codigos = df_muni['cod_ibge'].astype(str).unique()
     print(f"Municípios: {len(lista_codigos)}")
     print(f"Destino: {arquivo_destino}\n")
-    
+
+    # Preserva a importação histórica de 2013 quando o coletor é reexecutado.
+    # Os anos de 2014 a 2023 continuam sendo reconstruídos do zero.
+    df_2013_preservado = pd.DataFrame()
     if os.path.exists(arquivo_destino):
+        conn_anterior = sqlite3.connect(arquivo_destino)
+        try:
+            tabela_existe = conn_anterior.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dados_siconfi'"
+            ).fetchone()
+            if tabela_existe:
+                df_2013_preservado = pd.read_sql(
+                    "SELECT * FROM dados_siconfi WHERE ano = 2013",
+                    conn_anterior
+                )
+                df_2013_preservado.drop_duplicates(
+                    subset=['cod_ibge', 'ano', 'categoria', 'tipo'],
+                    keep='first',
+                    inplace=True
+                )
+        finally:
+            conn_anterior.close()
         os.remove(arquivo_destino)
 
     conn_dest = sqlite3.connect(arquivo_destino)
+    if not df_2013_preservado.empty:
+        df_2013_preservado.to_sql(
+            "dados_siconfi", conn_dest, if_exists='append', index=False
+        )
+        conn_dest.commit()
+        print(f"Preservados {len(df_2013_preservado)} registros de 2013.")
+
     contador = 0
     
     for cod in tqdm(lista_codigos, desc="Baixando"):

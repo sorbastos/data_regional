@@ -75,8 +75,33 @@ def gerar_painel_completo_v2():
     df_lado_y = pd.read_sql("SELECT * FROM pib_municipios", conn_p)
     df_ipca = pd.read_sql("SELECT * FROM indice_ipca", conn_p)
     conn_p.close()
-    # --- NOVO: Renomear a coluna de PIB ---
-    df_lado_y.rename(columns={'pib_valor': 'pib'}, inplace=True)
+
+    # Compatibilidade com as versões anteriores dos coletores de PIB.
+    colunas_pib = [
+        coluna for coluna in ('pib', 'pib_nominal', 'pib_valor')
+        if coluna in df_lado_y.columns
+    ]
+    if not colunas_pib:
+        raise ValueError(
+            "A tabela pib_municipios não possui uma coluna de PIB reconhecida "
+            "(pib, pib_nominal ou pib_valor)."
+        )
+    coluna_pib = colunas_pib[0]
+    if coluna_pib != 'pib':
+        df_lado_y.rename(columns={coluna_pib: 'pib'}, inplace=True)
+
+    if 'ipca_anual' not in df_ipca.columns:
+        raise ValueError(
+            "A tabela indice_ipca não possui a coluna ipca_anual. "
+            "Execute pib.py novamente para obter a série SGS 13522."
+        )
+
+    df_ipca['ano'] = pd.to_numeric(df_ipca['ano'], errors='coerce')
+    df_ipca['ipca_anual'] = pd.to_numeric(
+        df_ipca['ipca_anual'], errors='coerce'
+    )
+    if df_ipca[['ano', 'ipca_anual']].isna().any().any():
+        raise ValueError("A tabela indice_ipca contém anos ou taxas inválidas.")
 
     # =========================================================================
     # 3. CRUZAMENTO FINAL (INNER JOIN)
@@ -88,6 +113,8 @@ def gerar_painel_completo_v2():
     df_sic_pivot['ano'] = df_sic_pivot['ano'].astype(int)
     df_lado_y['cod_ibge'] = df_lado_y['cod_ibge'].astype(str)
     df_lado_y['ano'] = df_lado_y['ano'].astype(int)
+    df_lado_y['pib'] = pd.to_numeric(df_lado_y['pib'], errors='coerce')
+    df_lado_y.dropna(subset=['pib'], inplace=True)
 
     df_final = pd.merge(df_lado_y, df_sic_pivot, on=['cod_ibge', 'ano'], how='inner')
 
@@ -99,6 +126,15 @@ def gerar_painel_completo_v2():
     df_ipca.sort_values('ano', inplace=True)
     fatores = {}
     ano_base = 2023 
+
+    primeiro_ano = int(df_final['ano'].min())
+    anos_necessarios = set(range(primeiro_ano + 1, ano_base + 1))
+    anos_disponiveis = set(df_ipca['ano'].astype(int))
+    anos_ausentes = sorted(anos_necessarios - anos_disponiveis)
+    if anos_ausentes:
+        raise ValueError(
+            f"Faltam taxas anuais do IPCA para os anos: {anos_ausentes}"
+        )
     
     for ano in df_final['ano'].unique():
         if ano >= ano_base:
@@ -110,6 +146,8 @@ def gerar_painel_completo_v2():
             fatores[ano] = fator
 
     df_final['deflator_ipca'] = df_final['ano'].map(fatores)
+    if df_final['deflator_ipca'].isna().any():
+        raise ValueError("Não foi possível calcular o deflator para todas as linhas.")
     
     # --- FILTRO ESTRITO PARA DEFLAÇÃO ---
     # Lista explícita com os nomes das receitas

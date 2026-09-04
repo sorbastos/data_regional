@@ -23,6 +23,11 @@ Para reproduzir o projeto do zero, siga a ordem de execução abaixo. Os scripts
     python painel.py
     ```
 
+    A ordem entre `siconfi_v10.py` e `siconfi_2013.py` deve ser mantida. O
+    coletor de 2014-2023 reconstrói esses anos e preserva uma importação de
+    2013 já existente. O importador de 2013 pode ser reexecutado sem duplicar
+    registros, pois substitui somente aquele ano.
+
 3.  **Execute a análise econométrica** no R, utilizando o painel gerado:
     - Abra o arquivo `Reg.R` no RStudio e execute o script.
 
@@ -36,7 +41,7 @@ Para reproduzir o projeto do zero, siga a ordem de execução abaixo. Os scripts
 
 | Arquivo / Diretório | Descrição do Componente |
 | :--- | :--- |
-| `🐍 pib.py` | **ETL 1:** Extrai o PIB municipal (IBGE) e o índice de inflação IPCA (Banco Central), salvando-os no banco `pib_regional.db`. |
+| `🐍 pib.py` | **ETL 1:** Extrai o PIB municipal (IBGE) e o IPCA acumulado em 12 meses da série SGS 13522 (valor de dezembro), salvando-os no banco `pib_regional.db`. |
 | `🐍 siconfi_v10.py` | **ETL 2:** Coleta dados fiscais (receitas, despesas, população) de 2014 a 2023 via API do Siconfi para os municípios definidos em `pib.py`. Salva em `siconfi_v10_final.db`. |
 | `🐍 siconfi_2013.py` | **ETL 3:** Processa e anexa os dados fiscais de 2013 (a partir de arquivos CSV) ao banco de dados `siconfi_v10_final.db`. |
 | `🐍 painel.py` | **ETL Final & Modelagem:** Unifica as bases de dados, deflaciona os valores monetários para preços de 2023, calcula indicadores per capita e exporta o painel consolidado `Painel_Completo_2013_2023.xlsx`. |
